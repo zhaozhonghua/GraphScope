@@ -87,6 +87,7 @@ app:
     src: apps/centrality/degree/degree_centrality.h
     compatible_graph:
       - gs::DynamicFragment
+      - gs::ArrowFlattenedFragment
   - algo: eigenvector_centrality
     type: cpp_pie
     class_name: gs::EigenvectorCentrality
@@ -192,7 +193,7 @@ app:
   - algo: degree_assortativity_coefficient
     type: cpp_pie
     class_name: gs::DegreeAssortativity
-    src: apps/assortativity/degree/degree_assortativity_coefficient.h
+    src: apps/assortativity/degree_assortativity_coefficient.h
     compatible_graph:
       - grape::ImmutableEdgecutFragment
       - gs::ArrowProjectedFragment
@@ -209,6 +210,22 @@ app:
     src: apps/boundary/edge_boundary.h
     compatible_graph:
       - gs::DynamicProjectedFragment
+  - algo: average_degree_connectivity
+    type: cpp_pie
+    class_name: gs::AverageDegreeConnectivity
+    src: apps/assortativity/average_degree_connectivity.h
+    compatible_graph:
+      - grape::ImmutableEdgecutFragment
+      - gs::ArrowProjectedFragment
+      - gs::DynamicProjectedFragment
+  - algo: attribute_assortativity_coefficient
+    type: cpp_pie
+    class_name: gs::AttributeAssortativity
+    src: apps/assortativity/attribute_assortativity.h
+    compatible_graph:
+      - grape::ImmutableEdgecutFragment
+      - gs::ArrowProjectedFragment
+      - gs::DynamicProjectedFragment
   - algo: is_simple_path
     type: cpp_pie
     class_name: gs::IsSimplePath
@@ -217,4 +234,24 @@ app:
       - grape::ImmutableEdgecutFragment
       - gs::ArrowProjectedFragment
       - gs::DynamicProjectedFragment
-      
+  - algo: all_simple_paths
+    type: cpp_pie
+    class_name: gs::AllSimplePaths
+    src: apps/simple_path/all_simple_paths.h
+    compatible_graph:
+      - grape::ImmutableEdgecutFragment
+      - gs::ArrowProjectedFragment
+      - gs::DynamicProjectedFragment
+  - algo: betweenness_centrality
+    type: cpp_pie
+    class_name: gs::BetweennessCentrality
+    src: apps/centrality/betweenness/betweenness_centrality.h
+    compatible_graph:
+      - grape::ImmutableEdgecutFragment
+      - gs::DynamicProjectedFragment
+  - algo: betweenness_centrality_generic
+    type: cpp_pie
+    class_name: gs::BetweennessCentralityGeneric
+    src: apps/centrality/betweenness/betweenness_centrality_generic.h
+    compatible_graph:
+      - gs::DynamicProjectedFragment

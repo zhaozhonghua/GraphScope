@@ -79,6 +79,22 @@ double ProcessMatrix(std::vector<std::vector<T>>& degree_mixing_matrix,
   return static_cast<double>(sum) / (vara * varb);
 }
 
-}  // namespace gs
+/**
+ * @brief deterimine if type T can convert to type U in compile-time.
+ *
+ * @tparam T
+ * @tparam U
+ *
+ */
+template <typename T, typename U>
+class Conversion {
+ private:
+  static char Test(U);
+  static int Test(...);
+  static T MakeT();
 
+ public:
+  enum { exists = sizeof(Test(MakeT())) == sizeof(char) };
+};
+}  // namespace gs
 #endif  // ANALYTICAL_ENGINE_APPS_ASSORTATIVITY_UTILS_H_

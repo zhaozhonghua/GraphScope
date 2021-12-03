@@ -15,3 +15,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
+from graphscope.dataset.cora import load_cora_graph
+from graphscope.dataset.ldbc import load_ldbc
+from graphscope.dataset.modern_graph import load_modern_graph
+from graphscope.dataset.ogbl_collab import load_ogbl_collab
+from graphscope.dataset.ogbl_ddi import load_ogbl_ddi
+from graphscope.dataset.ogbn_arxiv import load_ogbn_arxiv
+from graphscope.dataset.ogbn_mag import load_ogbn_mag
+from graphscope.dataset.ogbn_proteins import load_ogbn_proteins
+from graphscope.dataset.p2p_network import load_p2p_network
+from graphscope.dataset.ppi import load_ppi_graph
+from graphscope.dataset.user2item import load_u2i_graph

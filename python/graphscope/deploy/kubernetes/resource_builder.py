@@ -17,10 +17,8 @@
 #
 
 
-import json
 import logging
-import os
-import shutil
+import sys
 
 from graphscope.deploy.kubernetes.utils import parse_readable_memory
 
@@ -256,6 +254,7 @@ class ServiceBuilder(object):
             "metadata": {
                 "annotations": self._annotations,
                 "name": self._name,
+                "labels": self._selector,
             },
             "spec": _remove_nones(
                 {
@@ -659,7 +658,8 @@ class GSEngineBuilder(ReplicaSetBuilder):
     ):
         vineyard_command = " ".join(
             [
-                "vineyardd",
+                sys.executable,
+                "-m" "vineyard",
                 "--size=%s" % str(shared_mem),
                 '--etcd_endpoint="%s"' % (";".join(etcd_endpoints),),
                 "--socket=%s" % self._ipc_socket_file,
@@ -799,18 +799,25 @@ class GSEngineBuilder(ReplicaSetBuilder):
         cmd = [
             "while ! ls $VINEYARD_IPC_SOCKET 2>/dev/null; do sleep 1 && echo -n .; done",
             ";",
+            'echo \'"@inherits": "@mars/deploy/oscar/base_config.yml"\' > /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "storage:" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "  backends: [vineyard]" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "  vineyard:" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "    vineyard_socket: $VINEYARD_IPC_SOCKET" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            "cat /tmp/mars-on-vineyard.yml",
+            ";",
             "python3",
             "-m",
-            "mars.worker.__main__",
-            "-a",
-            "$MY_POD_IP",
-            "-p",
-            str(port),
-            "-s",
-            scheduler_endpoint,
+            "mars.deploy.oscar.worker",
+            "--endpoint=$MY_POD_IP:%s" % port,
+            "--supervisors=%s" % scheduler_endpoint,
             "--log-level=debug",
-            "--ignore-avail-mem",
-            "--spill-dir=/tmp/mars",
+            "--config-file=/tmp/mars-on-vineyard.yml",
         ]
         cmd = ["bash", "-c", " ".join(cmd)]
 
@@ -852,14 +859,24 @@ class GSEngineBuilder(ReplicaSetBuilder):
         cmd = [
             "while ! ls $VINEYARD_IPC_SOCKET 2>/dev/null; do sleep 1 && echo -n .; done",
             ";",
+            'echo \'"@inherits": "@mars/deploy/oscar/base_config.yml"\' > /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "storage:" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "  backends: [vineyard]" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "  vineyard:" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            'echo "    vineyard_socket: $VINEYARD_IPC_SOCKET" >> /tmp/mars-on-vineyard.yml',
+            ";",
+            "cat /tmp/mars-on-vineyard.yml",
+            ";",
             "python3",
             "-m",
-            "mars.scheduler.__main__",
-            "-a",
-            "$MY_POD_IP",
-            "-p",
-            str(port),
+            "mars.deploy.oscar.supervisor",
+            "--endpoint=$MY_POD_IP:%s" % port,
             "--log-level=debug",
+            "--config-file=/tmp/mars-on-vineyard.yml",
         ]
         cmd = ["bash", "-c", " ".join(cmd)]
 
@@ -1204,6 +1221,7 @@ class GSCoordinatorBuilder(DeploymentBuilder):
     def add_coordinator_container(self, name, image, cpu, mem, preemptive, **kwargs):
         cmd = kwargs.pop("cmd", None)
         args = kwargs.pop("args", None)
+        module_name = kwargs.pop("module_name", "gscoordinator")
 
         resources_dict = {
             "requests": ResourceBuilder(self._requests_cpu, self._requests_mem).build()
@@ -1217,7 +1235,11 @@ class GSCoordinatorBuilder(DeploymentBuilder):
             for vol_mount in vol.build_mount():
                 volumeMounts.append(vol_mount)
 
-        pre_stop_command = ["python3", "/usr/local/bin/pre_stop.py"]
+        pre_stop_command = [
+            sys.executable,
+            "-m",
+            "{0}.hook.prestop".format(module_name),
+        ]
         lifecycle_dict = _remove_nones(
             {
                 "preStop": {

@@ -25,15 +25,16 @@ import networkx.convert
 from networkx.convert import from_dict_of_dicts
 from networkx.convert import from_dict_of_lists
 from networkx.convert import from_edgelist
+from networkx.convert import to_dict_of_dicts
+from networkx.convert import to_dict_of_lists
 
 from graphscope import nx
-from graphscope.framework.dag_utils import arrow_to_dynamic
 from graphscope.nx.utils.compat import import_as_graphscope_nx
 
 import_as_graphscope_nx(networkx.convert)
 
 
-def to_nx_graph(data, create_using=None, multigraph_input=False):  # noqa: C901
+def to_networkx_graph(data, create_using=None, multigraph_input=False):  # noqa: C901
     """Make a graph from a known data structure.
 
     The preferred way to call this is automatically
@@ -160,51 +161,7 @@ def to_nx_graph(data, create_using=None, multigraph_input=False):  # noqa: C901
     raise nx.NetworkXError("Input is not a known data type for conversion.")
 
 
-def from_gs_graph(gs_graph, dst_nx_graph):
-    """Create a new nx graph from a gs graph.
-
-    Parameters
-    ----------
-    graph: gs graph
-        A gs graph that contains graph data. the gs graph shoube be nodes id unique
-        in all labels and not has parallel edge between edge label.
-
-    dst_nx_graph: nx graph
-        the nx graph convert to.
-
-    Returns
-    -------
-    graph_def: GraphDef
-        graph definition contains meta data and schema.
-
-    Raises
-    -------
-    TypeError
-        if directed of gs graph not match to dst_nx_graph
-    AnalyticalEngineInternalError
-        if gs graph contain same node id between labels or has parallel edges
-        between edge labels.
-
-    Examples
-    --------
-    >>> import graphscope
-    >>> from graphscope import nx
-    >>> gs_g = graphscope.g(directed=False)
-    >>> gs_g = gs_g.add_vertices(...).add_edges(...)
-    >>> nx_g = nx.Graph(gs_g)
-    """
-    if gs_graph.session_id != dst_nx_graph.session_id:
-        raise RuntimeError(
-            "graphscope graph and networkx graph not in the same session."
-        )
-    if dst_nx_graph.is_directed() != gs_graph.is_directed():
-        raise TypeError("is_directed of gs_graph must agree with create_using")
-    op = arrow_to_dynamic(gs_graph)
-    graph_def = op.eval()
-    return graph_def
-
-
-def to_networkx_graph(nx_graph):
+def to_nx_graph(nx_graph):
     import networkx
 
     if not nx_graph.is_directed() and not nx_graph.is_multigraph():

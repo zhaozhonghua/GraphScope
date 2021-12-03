@@ -18,11 +18,20 @@
 #include <utility>
 #include <vector>
 
+#include "boost/algorithm/string.hpp"
+#include "boost/algorithm/string/split.hpp"
+
+#include "vineyard/io/io/io_factory.h"
+
+#ifdef ENABLE_JAVA_SDK
+#include "core/context/java_pie_projected_context.h"
+#include "core/context/java_pie_property_context.h"
+#endif
+
 #include "core/context/tensor_context.h"
 #include "core/context/vertex_data_context.h"
 #include "core/context/vertex_property_context.h"
 #include "core/fragment/dynamic_fragment.h"
-#include "core/fragment/dynamic_fragment_reporter.h"
 #include "core/grape_instance.h"
 #include "core/io/property_parser.h"
 #include "core/launcher.h"
@@ -39,6 +48,8 @@ GrapeInstance::GrapeInstance(const grape::CommSpec& comm_spec)
     : comm_spec_(comm_spec) {}
 
 void GrapeInstance::Init(const std::string& vineyard_socket) {
+  // force link vineyard_io library for graph/app compilation
+  vineyard::IOFactory::Init();
   EnsureClient(client_, vineyard_socket);
   if (comm_spec_.worker_id() == grape::kCoordinatorRank) {
     VLOG(1) << "Workers of grape-engine initialized.";
@@ -227,6 +238,7 @@ bl::result<std::string> GrapeInstance::query(const rpc::GSParams& params,
   std::string context_schema;
   if (ctx_wrapper != nullptr) {
     context_type = ctx_wrapper->context_type();
+    VLOG(0) << "context type: " << context_type;
     context_schema = ctx_wrapper->schema();
     BOOST_LEAF_CHECK(object_manager_.PutObject(ctx_wrapper));
   }
@@ -242,28 +254,10 @@ bl::result<void> GrapeInstance::unloadContext(const rpc::GSParams& params) {
 
 bl::result<std::string> GrapeInstance::reportGraph(
     const rpc::GSParams& params) {
-#ifdef NETWORKX
   BOOST_LEAF_AUTO(graph_name, params.Get<std::string>(rpc::GRAPH_NAME));
   BOOST_LEAF_AUTO(wrapper,
                   object_manager_.GetObject<IFragmentWrapper>(graph_name));
-  auto graph_type = wrapper->graph_def().graph_type();
-
-  if (graph_type != rpc::graph::DYNAMIC_PROPERTY) {
-    RETURN_GS_ERROR(
-        vineyard::ErrorCode::kInvalidValueError,
-        "GraphType must be DYNAMIC_PROPERTY, the origin graph type is:  " +
-            rpc::graph::GraphTypePb_Name(graph_type) +
-            ", graph id: " + graph_name);
-  }
-  auto fragment =
-      std::static_pointer_cast<DynamicFragment>(wrapper->fragment());
-  DynamicGraphReporter reporter(comm_spec_);
-  return reporter.Report(fragment, params);
-#else
-  RETURN_GS_ERROR(vineyard::ErrorCode::kUnimplementedMethod,
-                  "GraphScope is built with NETWORKX=OFF, please recompile it "
-                  "with NETWORKX=ON");
-#endif  // NETWORKX
+  return wrapper->ReportGraph(comm_spec_, params);
 }
 
 bl::result<void> GrapeInstance::modifyVertices(
@@ -372,6 +366,34 @@ bl::result<std::shared_ptr<grape::InArchive>> GrapeInstance::contextToNumpy(
 
     BOOST_LEAF_AUTO(selector, LabeledSelector::parse(s_selector));
     return wrapper->ToNdArray(comm_spec_, selector, range);
+#ifdef ENABLE_JAVA_SDK
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROPERTY) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kIllegalStateError,
+          "Unsupported java property context type: " + std::string(ctx_type));
+    }
+    auto wrapper = std::dynamic_pointer_cast<IJavaPIEPropertyContextWrapper>(
+        base_ctx_wrapper);
+    BOOST_LEAF_AUTO(selector, LabeledSelector::parse(s_selector));
+    return wrapper->ToNdArray(comm_spec_, selector, range);
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROJECTED) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kInvalidValueError,
+          "Unsupported java projected context type: " + std::string(ctx_type));
+    }
+    auto wrapper = std::dynamic_pointer_cast<IJavaPIEProjectedContextWrapper>(
+        base_ctx_wrapper);
+    BOOST_LEAF_AUTO(selector, Selector::parse(s_selector));
+    return wrapper->ToNdArray(comm_spec_, selector, range);
+#endif
   }
   RETURN_GS_ERROR(vineyard::ErrorCode::kInvalidValueError,
                   "Unsupported context type: " + std::string(ctx_type));
@@ -438,6 +460,34 @@ bl::result<std::shared_ptr<grape::InArchive>> GrapeInstance::contextToDataframe(
 
     BOOST_LEAF_AUTO(selectors, LabeledSelector::ParseSelectors(s_selectors));
     return wrapper->ToDataframe(comm_spec_, selectors, range);
+#ifdef ENABLE_JAVA_SDK
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROPERTY) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kIllegalStateError,
+          "Unsupported java property context type: " + std::string(ctx_type));
+    }
+    auto wrapper = std::dynamic_pointer_cast<IJavaPIEPropertyContextWrapper>(
+        base_ctx_wrapper);
+    BOOST_LEAF_AUTO(selectors, LabeledSelector::ParseSelectors(s_selectors));
+    return wrapper->ToDataframe(comm_spec_, selectors, range);
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROJECTED) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kInvalidValueError,
+          "Unsupported java projected context type: " + std::string(ctx_type));
+    }
+    auto wrapper = std::dynamic_pointer_cast<IJavaPIEProjectedContextWrapper>(
+        base_ctx_wrapper);
+    BOOST_LEAF_AUTO(selectors, Selector::ParseSelectors(s_selectors));
+    return wrapper->ToDataframe(comm_spec_, selectors, range);
+#endif
   }
   RETURN_GS_ERROR(vineyard::ErrorCode::kInvalidValueError,
                   "Unsupported context type: " + std::string(ctx_type));
@@ -497,6 +547,38 @@ bl::result<std::string> GrapeInstance::contextToVineyardTensor(
     BOOST_LEAF_AUTO(selector, LabeledSelector::parse(s_selector));
     BOOST_LEAF_ASSIGN(
         id, wrapper->ToVineyardTensor(comm_spec_, *client_, selector, range));
+#ifdef ENABLE_JAVA_SDK
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROPERTY) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kIllegalStateError,
+          "Unsupported java property context type: " + std::string(ctx_type));
+    }
+    auto wrapper = std::dynamic_pointer_cast<IJavaPIEPropertyContextWrapper>(
+        base_ctx_wrapper);
+    BOOST_LEAF_AUTO(s_selector, params.Get<std::string>(rpc::SELECTOR));
+    BOOST_LEAF_AUTO(selector, LabeledSelector::parse(s_selector));
+    BOOST_LEAF_ASSIGN(
+        id, wrapper->ToVineyardTensor(comm_spec_, *client_, selector, range));
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROJECTED) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kIllegalStateError,
+          "Unsupported java projected context type: " + std::string(ctx_type));
+    }
+    auto wrapper = std::dynamic_pointer_cast<IJavaPIEProjectedContextWrapper>(
+        base_ctx_wrapper);
+    BOOST_LEAF_AUTO(s_selector, params.Get<std::string>(rpc::SELECTOR));
+    BOOST_LEAF_AUTO(selector, Selector::parse(s_selector));
+    BOOST_LEAF_ASSIGN(
+        id, wrapper->ToVineyardTensor(comm_spec_, *client_, selector, range));
+#endif
   } else {
     RETURN_GS_ERROR(vineyard::ErrorCode::kInvalidValueError,
                     "Unsupported context type: " + std::string(ctx_type));
@@ -564,6 +646,40 @@ bl::result<std::string> GrapeInstance::contextToVineyardDataFrame(
     BOOST_LEAF_AUTO(selectors, LabeledSelector::ParseSelectors(s_selectors));
     BOOST_LEAF_ASSIGN(id, vd_ctx_wrapper->ToVineyardDataframe(
                               comm_spec_, *client_, selectors, range));
+#ifdef ENABLE_JAVA_SDK
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROPERTY) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kIllegalStateError,
+          "Unsupported java property context type: " + std::string(ctx_type));
+    }
+    auto vd_ctx_wrapper =
+        std::dynamic_pointer_cast<IJavaPIEPropertyContextWrapper>(
+            base_ctx_wrapper);
+    BOOST_LEAF_AUTO(s_selectors, params.Get<std::string>(rpc::SELECTOR));
+    BOOST_LEAF_AUTO(selectors, LabeledSelector::ParseSelectors(s_selectors));
+    BOOST_LEAF_ASSIGN(id, vd_ctx_wrapper->ToVineyardDataframe(
+                              comm_spec_, *client_, selectors, range));
+  } else if (ctx_type.find(CONTEXT_TYPE_JAVA_PIE_PROJECTED) !=
+             std::string::npos) {
+    std::vector<std::string> outer_and_inner;
+    boost::split(outer_and_inner, ctx_type, boost::is_any_of(":"));
+    if (outer_and_inner.size() != 2) {
+      RETURN_GS_ERROR(
+          vineyard::ErrorCode::kIllegalStateError,
+          "Unsupported java projected context type: " + std::string(ctx_type));
+    }
+    auto vd_ctx_wrapper =
+        std::dynamic_pointer_cast<IJavaPIEProjectedContextWrapper>(
+            base_ctx_wrapper);
+    BOOST_LEAF_AUTO(s_selectors, params.Get<std::string>(rpc::SELECTOR));
+    BOOST_LEAF_AUTO(selectors, Selector::ParseSelectors(s_selectors));
+    BOOST_LEAF_ASSIGN(id, vd_ctx_wrapper->ToVineyardDataframe(
+                              comm_spec_, *client_, selectors, range));
+#endif
   } else {
     RETURN_GS_ERROR(vineyard::ErrorCode::kInvalidValueError,
                     "Unsupported context type: " + std::string(ctx_type));
@@ -622,9 +738,11 @@ bl::result<rpc::graph::GraphDefPb> GrapeInstance::convertGraph(
 
   if (src_graph_type == rpc::graph::ARROW_PROPERTY &&
       dst_graph_type == rpc::graph::DYNAMIC_PROPERTY) {
-    BOOST_LEAF_AUTO(dst_graph_wrapper,
-                    g_utils->ToDynamicFragment(comm_spec_, src_frag_wrapper,
-                                               dst_graph_name));
+    BOOST_LEAF_AUTO(default_label_id,
+                    params.Get<int64_t>(rpc::DEFAULT_LABEL_ID));
+    BOOST_LEAF_AUTO(dst_graph_wrapper, g_utils->ToDynamicFragment(
+                                           comm_spec_, src_frag_wrapper,
+                                           dst_graph_name, default_label_id));
     BOOST_LEAF_CHECK(object_manager_.PutObject(dst_graph_wrapper));
     return dst_graph_wrapper->graph_def();
   } else if (src_graph_type == rpc::graph::DYNAMIC_PROPERTY &&
@@ -687,7 +805,7 @@ bl::result<rpc::graph::GraphDefPb> GrapeInstance::toUnDirected(
   std::string dst_graph_name = "graph_" + generateId();
 
   BOOST_LEAF_AUTO(dst_wrapper,
-                  src_wrapper->ToUnDirected(comm_spec_, dst_graph_name));
+                  src_wrapper->ToUndirected(comm_spec_, dst_graph_name));
   BOOST_LEAF_CHECK(object_manager_.PutObject(dst_wrapper));
   return dst_wrapper->graph_def();
 #else
@@ -905,7 +1023,8 @@ bl::result<void> GrapeInstance::registerGraphType(const rpc::GSParams& params) {
     BOOST_LEAF_CHECK(utils->Init());
     return object_manager_.PutObject(utils);
   } else if (graph_type == rpc::graph::ARROW_PROJECTED ||
-             graph_type == rpc::graph::DYNAMIC_PROJECTED) {
+             graph_type == rpc::graph::DYNAMIC_PROJECTED ||
+             graph_type == rpc::graph::ARROW_FLATTENED) {
     auto projector = std::make_shared<Projector>(type_sig, lib_path);
     BOOST_LEAF_CHECK(projector->Init());
     return object_manager_.PutObject(projector);

@@ -30,38 +30,60 @@ from networkx.classes.reportviews import InEdgeView
 from networkx.classes.reportviews import OutDegreeView
 from networkx.classes.reportviews import OutEdgeView
 
-from graphscope.client.session import get_default_session
 from graphscope.framework import dag_utils
 from graphscope.framework.dag_utils import copy_graph
+from graphscope.framework.errors import check_argument
 from graphscope.framework.graph_schema import GraphSchema
 from graphscope.nx import NetworkXError
 from graphscope.nx.classes.graph import Graph
-from graphscope.nx.convert import from_gs_graph
-from graphscope.nx.convert import to_nx_graph
+from graphscope.nx.convert import to_networkx_graph
 from graphscope.nx.utils.compat import patch_docstring
-from graphscope.nx.utils.other import empty_graph_in_engine
+from graphscope.nx.utils.misc import check_node_is_legal
+from graphscope.nx.utils.misc import empty_graph_in_engine
+from graphscope.proto import graph_def_pb2
 from graphscope.proto import types_pb2
 
 
 class DiGraph(Graph):
     """
-    Base class for directed graphs in graphscope.nx.
+    Base class for directed graphs.
 
-    A DiGraph that hold the metadata of a graph, and provide NetworkX-like DiGraph APIs.
+    A DiGraph that holds the metadata of a graph, and provides NetworkX-like DiGraph APIs.
 
     It is worth noticing that the graph is actually stored by the Analytical Engine backend.
-    In other words, the graph object holds nothing but metadata of a graph
+    In other words, the Graph object holds nothing but metadata of a graph
 
     DiGraph support nodes and edges with optional data, or attributes.
 
     DiGraphs support directed edges.  Self loops are allowed but multiple
     (parallel) edges are not.
 
-    Nodes can be some hashable objects including int/str/float/tuple/bool object
-    with optional key/value attributes.
+    Nodes can be arbitrary int/str/float/bool objects with optional
+    key/value attributes.
 
     Edges are represented as links between nodes with optional
     key/value attributes.
+
+    DiGraph support node label if it's created from a GraphScope graph object.
+    nodes are identified by `(label, id)` tuple.
+
+    Parameters
+    ----------
+    incoming_graph_data : input graph (optional, default: None)
+        Data to initialize graph. If None (default) an empty
+        graph is created.  The data can be any format that is supported
+        by the to_networkx_graph() function, currently including edge list,
+        dict of dicts, dict of lists, NetworkX graph, NumPy matrix
+        or 2d ndarray, Pandas DataFrame, SciPy sparse matrix, or a GraphScope
+        graph object.
+
+    default_label : default node label (optional, default: None)
+        if incoming_graph_data is a GraphScope graph object, default label means
+        the nodes of the label can be identified by id directly, other label nodes
+        need to use `(label, id)` to identify.
+
+    attr : keyword arguments, optional (default= no attributes)
+        Attributes to add to graph as key=value pairs.
 
     See Also
     --------
@@ -179,6 +201,31 @@ class DiGraph(Graph):
     ...         # Do something useful with the edges
     ...         pass
 
+    **Transformation**
+
+    Create a graph with GraphScope graph object. First we init a GraphScope graph
+    with two node labels: person and comment`
+
+    >>> g = graphscope.g(directed=True).add_vertice("persion.csv", label="person").add_vertice("comment.csv", label="comment")
+
+    create a graph with g, set default_label to 'person'
+
+    >>> G = nx.DiGraph(g, default_label="person")
+
+    `person` label nodes can be identified by id directly, for `comment` label,
+    we has to use tuple `("comment", id)` identify. Like, add a person label
+    node and a comment label node
+
+    >>> G.add_node(0, type="person")
+    >>> G.add_node(("comment", 0), type="comment")
+
+    print property of two nodes
+
+    >>> G.nodes[0]
+    {"type", "person"}
+    >>> G.nodes[("comment", 0)]
+    {"type", "comment"}
+
     **Reporting:**
 
     Simple graph information is obtained using object-attributes and methods.
@@ -194,7 +241,7 @@ class DiGraph(Graph):
     """
 
     @patch_docstring(Graph.__init__)
-    def __init__(self, incoming_graph_data=None, **attr):
+    def __init__(self, incoming_graph_data=None, default_label=None, **attr):
         if self._session is None:
             self._try_to_get_default_session()
 
@@ -219,6 +266,10 @@ class DiGraph(Graph):
             "create_empty_in_engine", True
         )  # a hidden parameter
         self._distributed = attr.pop("dist", False)
+        if incoming_graph_data is not None and self._is_gs_graph(incoming_graph_data):
+            # convert from gs graph always use distributed mode
+            self._distributed = True
+        self._default_label = default_label
 
         if not self._is_gs_graph(incoming_graph_data) and create_empty_in_engine:
             graph_def = empty_graph_in_engine(
@@ -229,13 +280,12 @@ class DiGraph(Graph):
         # attempt to load graph with data
         if incoming_graph_data is not None:
             if self._is_gs_graph(incoming_graph_data):
-                graph_def = from_gs_graph(incoming_graph_data, self)
-                self._key = graph_def.key
-                self._schema.init_nx_schema(incoming_graph_data.schema)
+                self._init_with_arrow_property_graph(incoming_graph_data)
             else:
-                to_nx_graph(incoming_graph_data, create_using=self)
+                g = to_networkx_graph(incoming_graph_data, create_using=self)
+                check_argument(isinstance(g, Graph))
 
-        # load graph attributes (must be after to_nx_graph)
+        # load graph attributes (must be after to_networkx_graph)
         self.graph.update(attr)
         self._saved_signature = self.signature
 
@@ -267,6 +317,7 @@ class DiGraph(Graph):
 
     @patch_docstring(RefDiGraph.successors)
     def successors(self, n):
+        check_node_is_legal(n)
         try:
             return iter(self._succ[n])
         except KeyError:
@@ -277,6 +328,7 @@ class DiGraph(Graph):
 
     @patch_docstring(RefDiGraph.predecessors)
     def predecessors(self, n):
+        check_node_is_legal(n)
         try:
             return iter(self._pred[n])
         except KeyError:
@@ -420,6 +472,8 @@ class DiGraph(Graph):
 
     @patch_docstring(RefDiGraph.reverse)
     def reverse(self, copy=True):
+        self._convert_arrow_to_dynamic()
+
         if not copy:
             g = self.__class__(create_empty_in_engine=False)
             g.graph.update(self.graph)

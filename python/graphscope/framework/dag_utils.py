@@ -19,10 +19,7 @@
 import json
 import pickle
 
-import numpy as np
-
 from graphscope.framework import utils
-from graphscope.framework.dag import DAGNode
 from graphscope.framework.errors import check_argument
 from graphscope.framework.operation import Operation
 from graphscope.proto import attr_value_pb2
@@ -62,7 +59,7 @@ def bind_app(graph, app_assets):
         graph.session_id,
         types_pb2.BIND_APP,
         inputs=inputs,
-        config={},
+        config={types_pb2.APP_ALGO: utils.s_to_attr(app_assets.algo)},
         output_types=types_pb2.BOUND_APP,
     )
     return op
@@ -278,6 +275,7 @@ def arrow_to_dynamic(graph):
         types_pb2.VID_TYPE: utils.s_to_attr(
             utils.data_type_to_cpp(graph.schema.vid_type)
         ),
+        types_pb2.DEFAULT_LABEL_ID: utils.i_to_attr(graph._default_label_id),
     }
     op = Operation(
         graph.session_id,
@@ -339,7 +337,14 @@ def modify_vertices(graph, modify_type, vertices):
 
 
 def report_graph(
-    graph, report_type, node=None, edge=None, fid=None, lid=None, key=None
+    graph,
+    report_type,
+    node=None,
+    edge=None,
+    fid=None,
+    lid=None,
+    key=None,
+    label_id=None,
 ):
     """Create report operation for nx graph.
 
@@ -381,6 +386,9 @@ def report_graph(
         types_pb2.GRAPH_NAME: utils.s_to_attr(graph.key),
         types_pb2.REPORT_TYPE: utils.report_type_to_attr(report_type),
     }
+    if graph.graph_type == graph_def_pb2.ARROW_PROPERTY:
+        config[types_pb2.DEFAULT_LABEL_ID] = utils.i_to_attr(graph._default_label_id)
+
     if node is not None:
         config[types_pb2.NODE] = utils.s_to_attr(node)
     if edge is not None:
@@ -389,6 +397,8 @@ def report_graph(
         config[types_pb2.FID] = utils.i_to_attr(fid)
     if lid is not None:
         config[types_pb2.LID] = utils.i_to_attr(lid)
+    if label_id is not None:
+        config[types_pb2.V_LABEL_ID] = utils.i_to_attr(label_id)
 
     config[types_pb2.EDGE_KEY] = utils.s_to_attr(str(key) if key is not None else "")
     op = Operation(
@@ -479,6 +489,48 @@ def project_dynamic_property_graph(graph, v_prop, e_prop, v_prop_type, e_prop_ty
         types_pb2.V_DATA_TYPE: utils.s_to_attr(utils.data_type_to_cpp(v_prop_type)),
         types_pb2.E_DATA_TYPE: utils.s_to_attr(utils.data_type_to_cpp(e_prop_type)),
     }
+
+    op = Operation(
+        graph.session_id,
+        types_pb2.PROJECT_TO_SIMPLE,
+        config=config,
+        output_types=types_pb2.GRAPH,
+    )
+    return op
+
+
+def flatten_arrow_property_graph(
+    graph, v_prop, e_prop, v_prop_type, e_prop_type, oid_type=None, vid_type=None
+):
+    """Flatten arrow property graph.
+
+    Args:
+        graph (:class:`nx.Graph`): A nx graph hosts an arrow property graph.
+        v_prop (str): The vertex property id.
+        e_prop (str): The edge property id.
+        v_prop_type (str): Type of the node attribute.
+        e_prop_type (str): Type of the edge attribute.
+        oid_type (str): Type of oid.
+        vid_type (str): Type of vid.
+
+    Returns:
+        Operation to flatten an arrow property graph. Results in a arrow flattened graph.
+    """
+    config = {
+        types_pb2.GRAPH_NAME: utils.s_to_attr(graph.key),
+        types_pb2.GRAPH_TYPE: utils.graph_type_to_attr(graph_def_pb2.ARROW_FLATTENED),
+        types_pb2.DST_GRAPH_TYPE: utils.graph_type_to_attr(graph.graph_type),
+        types_pb2.V_DATA_TYPE: utils.s_to_attr(utils.data_type_to_cpp(v_prop_type)),
+        types_pb2.E_DATA_TYPE: utils.s_to_attr(utils.data_type_to_cpp(e_prop_type)),
+    }
+    if graph.graph_type == graph_def_pb2.ARROW_PROPERTY:
+        config[types_pb2.V_PROP_KEY] = utils.s_to_attr(str(v_prop))
+        config[types_pb2.E_PROP_KEY] = utils.s_to_attr(str(e_prop))
+        config[types_pb2.OID_TYPE] = utils.s_to_attr(utils.data_type_to_cpp(oid_type))
+        config[types_pb2.VID_TYPE] = utils.s_to_attr(utils.data_type_to_cpp(vid_type))
+    else:
+        config[types_pb2.V_PROP_KEY] = utils.s_to_attr(v_prop)
+        config[types_pb2.E_PROP_KEY] = utils.s_to_attr(e_prop)
 
     op = Operation(
         graph.session_id,
@@ -664,6 +716,17 @@ def create_subgraph(graph, nodes=None, edges=None):
     return op
 
 
+def create_unload_op(session_id, op_type, inputs):
+    """Uility method to create a unload `Operation` based on op type and op."""
+    op = Operation(
+        session_id,
+        op_type,
+        inputs=inputs,
+        output_types=types_pb2.NULL_OUTPUT,
+    )
+    return op
+
+
 def unload_app(app):
     """Unload a loaded app.
 
@@ -673,13 +736,7 @@ def unload_app(app):
     Returns:
         An op to unload the `app`.
     """
-    op = Operation(
-        app.session_id,
-        types_pb2.UNLOAD_APP,
-        inputs=[app.op],
-        output_types=types_pb2.NULL_OUTPUT,
-    )
-    return op
+    return create_unload_op(app.session_id, types_pb2.UNLOAD_APP, [app.op])
 
 
 def unload_graph(graph):
@@ -691,23 +748,11 @@ def unload_graph(graph):
     Returns:
         An op to unload the `graph`.
     """
-    op = Operation(
-        graph.session_id,
-        types_pb2.UNLOAD_GRAPH,
-        inputs=[graph.op],
-        output_types=types_pb2.NULL_OUTPUT,
-    )
-    return op
+    return create_unload_op(graph.session_id, types_pb2.UNLOAD_GRAPH, [graph.op])
 
 
 def unload_context(context):
-    op = Operation(
-        context.session_id,
-        types_pb2.UNLOAD_CONTEXT,
-        inputs=[context.op],
-        output_types=types_pb2.NULL_OUTPUT,
-    )
-    return op
+    return create_unload_op(context.session_id, types_pb2.UNLOAD_CONTEXT, [context.op])
 
 
 def context_to_numpy(context, selector=None, vertex_range=None, axis=0):
@@ -931,7 +976,7 @@ def graph_to_dataframe(graph, selector=None, vertex_range=None):
     return op
 
 
-def create_interactive_query(graph, engine_params, enable_gaia):
+def create_interactive_query(graph, engine_params):
     """Create a interactive engine that query on the :code:`graph`
 
     Args:
@@ -949,7 +994,6 @@ def create_interactive_query(graph, engine_params, enable_gaia):
         config[types_pb2.GIE_GREMLIN_ENGINE_PARAMS] = utils.s_to_attr(
             json.dumps(engine_params)
         )
-    config[types_pb2.GIE_ENABLE_GAIA] = utils.b_to_attr(enable_gaia)
     op = Operation(
         graph.session_id,
         types_pb2.CREATE_INTERACTIVE_QUERY,
@@ -1028,7 +1072,7 @@ def close_learning_instance(learning_instance):
     return op
 
 
-def gremlin_query(interactive_query, query, request_options=None, query_gaia=False):
+def gremlin_query(interactive_query, query, request_options=None):
     """Execute a gremlin query.
 
     Args:
@@ -1050,7 +1094,6 @@ def gremlin_query(interactive_query, query, request_options=None, query_gaia=Fal
         config[types_pb2.GIE_GREMLIN_REQUEST_OPTIONS] = utils.s_to_attr(
             json.dumps(request_options)
         )
-    config[types_pb2.GIE_QUERY_GAIA] = utils.b_to_attr(query_gaia)
     op = Operation(
         interactive_query.session_id,
         types_pb2.GREMLIN_QUERY,
