@@ -41,6 +41,7 @@ spec:
         {{- end }}
       labels: {{- include "graphscope-store.labels" . | nindent 8 }}
         app.kubernetes.io/component: ingestor
+        nodetype: ingestor
         {{- if .Values.commonLabels }}
         {{- include "graphscope-store.tplvalues.render" ( dict "value" .Values.commonLabels "context" $ ) | nindent 8 }}
         {{- end }}
@@ -52,6 +53,16 @@ spec:
       {{- if .Values.ingestor.affinity }}
       affinity: {{- include "graphscope-store.tplvalues.render" (dict "value" .Values.ingestor.affinity "context" $) | nindent 8 }}
       {{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: nodetype
+                operator: In
+                values:
+                - ingestor
+            topologyKey: kubernetes.io/hostname
       initContainers:
         {{- if .Values.ingestor.initContainers }}
         {{- include "graphscope-store.tplvalues.render" (dict "value" .Values.ingestor.initContainers "context" $) | nindent 8 }}
