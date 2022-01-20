@@ -201,6 +201,7 @@ fn init_options(options: &HashMap<String, String>) -> Options {
     let mut ret = Options::default();
     ret.create_if_missing(true);
     // TODO: Add other customized db options.
+    ret.set_write_buffer_size(1 << 30);
     ret
 }
 
